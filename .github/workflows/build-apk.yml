@@ -29,17 +29,16 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: |
-            platform-tools
-            platforms;android-36.1
-            platforms;android-36
-            build-tools;36.0.0
+          packages: ""
 
-      - name: Ensure Android SDK licenses are accepted
+      - name: Accept Android SDK licenses and install SDK 36 components
         shell: bash
         run: |
           set +o pipefail
           yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager "platforms;android-36.1" || true
+          ls -la "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platforms" || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
