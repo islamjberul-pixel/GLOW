@@ -164,6 +164,8 @@ private fun GlowFirstAppRoot(viewModel: MainViewModel) {
         composable(Routes.PREVIEW) {
             ScreenshotPreviewScreen(
                 macroConfig = macroConfig,
+                banner = feedbackBanner,
+                onDismissBanner = { viewModel.dismissBanner() },
                 onEditKeymap = {
                     navController.navigate(Routes.EDITOR) {
                         launchSingleTop = true

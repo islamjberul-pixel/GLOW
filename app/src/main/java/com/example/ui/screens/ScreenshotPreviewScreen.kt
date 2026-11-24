@@ -53,6 +53,8 @@ import java.io.File
 @Composable
 fun ScreenshotPreviewScreen(
     macroConfig: MacroConfig,
+    banner: com.example.ui.UiFeedbackBanner? = null,
+    onDismissBanner: () -> Unit = {},
     onEditKeymap: () -> Unit,
     onChooseAnother: () -> Unit,
     onBack: () -> Unit
@@ -114,6 +116,14 @@ fun ScreenshotPreviewScreen(
                     StatusPill(
                         label = if (macroConfig.isLandscapeScreenshot) "LANDSCAPE" else "PORTRAIT",
                         isPositive = true
+                    )
+                }
+
+                if (banner != null) {
+                    com.example.ui.components.FeedbackBannerCard(
+                        message = banner.message,
+                        isError = banner.isError,
+                        onDismiss = onDismissBanner
                     )
                 }
 

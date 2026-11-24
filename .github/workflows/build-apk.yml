@@ -86,8 +86,8 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
             echo "title=GLOW FIRST ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=v1.0.0" >> "$GITHUB_OUTPUT"
-            echo "title=GLOW FIRST v1.0.0" >> "$GITHUB_OUTPUT"
+            echo "tag=v1.0.1" >> "$GITHUB_OUTPUT"
+            echo "title=GLOW FIRST v1.0.1" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create GitHub Release and Attach APK

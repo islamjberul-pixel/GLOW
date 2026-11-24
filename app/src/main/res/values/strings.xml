@@ -10,7 +10,12 @@
     <string name="action_stop_overlay">Stop Overlay</string>
     <string name="error_overlay_permission_missing">Display over other apps permission is required to show the floating Trigger.</string>
     <string name="error_accessibility_disabled">GLOW FIRST Accessibility Service is disabled. Enable it in Settings to perform taps.</string>
-    <string name="error_screenshot_failed">Could not load the selected screenshot. Please choose a valid image.</string>
+    <string name="error_screenshot_failed">Image could not be decoded. Please select a valid PNG, JPG, JPEG, or WEBP screenshot.</string>
+    <string name="error_screenshot_unsupported">Unsupported image format. Please select a PNG, JPG, JPEG, or WEBP image.</string>
+    <string name="error_screenshot_access_denied">Image access denied. Please select the screenshot from Gallery or Files again.</string>
+    <string name="error_screenshot_unavailable">Image file unavailable. Please choose a screenshot stored on your device.</string>
+    <string name="error_screenshot_decode_failed">Image could not be decoded. The selected file may be corrupted.</string>
+    <string name="error_screenshot_oom">Insufficient memory to load this image. Please try a smaller screenshot.</string>
     <string name="error_invalid_cps">Enter a valid CPS value between 1 and 30.</string>
     <string name="error_macro_not_configured">Macro configuration is missing. Please select a screenshot and save your keymap first.</string>
     <string name="error_gesture_dispatch_failed">Android rejected the tap gesture. Ensure the Accessibility Service is active and no system dialog is blocking input.</string>

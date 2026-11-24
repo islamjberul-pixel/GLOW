@@ -90,9 +90,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     height = saved.height
                 )
                 onSuccess()
-            }.onFailure {
+            }.onFailure { throwable ->
+                val messageRes = when ((throwable as? com.example.util.ScreenshotImportException)?.kind) {
+                    com.example.util.ScreenshotErrorKind.UNSUPPORTED_FORMAT ->
+                        R.string.error_screenshot_unsupported
+                    com.example.util.ScreenshotErrorKind.ACCESS_DENIED ->
+                        R.string.error_screenshot_access_denied
+                    com.example.util.ScreenshotErrorKind.FILE_UNAVAILABLE ->
+                        R.string.error_screenshot_unavailable
+                    com.example.util.ScreenshotErrorKind.DECODE_FAILED ->
+                        R.string.error_screenshot_decode_failed
+                    com.example.util.ScreenshotErrorKind.INSUFFICIENT_MEMORY ->
+                        R.string.error_screenshot_oom
+                    null -> R.string.error_screenshot_failed
+                }
                 _feedbackBanner.value = UiFeedbackBanner(
-                    message = app.getString(R.string.error_screenshot_failed),
+                    message = app.getString(messageRes),
                     isError = true
                 )
             }
