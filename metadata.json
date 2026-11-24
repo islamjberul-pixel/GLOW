@@ -1,6 +1,6 @@
 {
   "name": "GLOW FIRST",
-  "description": "Smart single-profile Android gaming macro with floating trigger overlay and Accessibility hold-to-tap engine.",
+  "description": "GLOW FIRST V2.0.0 Android gaming macro with Live Keymap Editor over games, floating trigger overlay, AccessibilityService, and Shizuku dual-backend tap engine.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

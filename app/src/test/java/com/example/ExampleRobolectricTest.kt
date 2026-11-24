@@ -9,6 +9,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.model.MacroConfig
 import com.example.model.MacroEngineState
 import com.example.model.PermissionStatus
+import com.example.model.ShizukuStatus
 import com.example.ui.screens.HomeScreen
 import com.example.ui.theme.GlowFirstTheme
 import org.junit.Assert.assertEquals
@@ -33,7 +34,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `home screen displays branding, ADD MACRO CTA, and truthful permission statuses`() {
+    fun `home screen displays branding, ADD GAME, OPEN GAME, and backend statuses`() {
         composeTestRule.setContent {
             GlowFirstTheme {
                 HomeScreen(
@@ -43,11 +44,13 @@ class ExampleRobolectricTest {
                         accessibilityGranted = false,
                         notificationGranted = true
                     ),
+                    shizukuStatus = ShizukuStatus(),
                     engineState = MacroEngineState(),
-                    isImportingScreenshot = false,
                     banner = null,
-                    onAddMacroClick = {},
-                    onEditKeymapClick = {},
+                    onAddGameClick = {},
+                    onOpenGameClick = {},
+                    onOpenLiveKeymapClick = {},
+                    onSelectInputMode = {},
                     onToggleOverlay = {},
                     onOpenPermissions = {},
                     onOpenInfo = {},
@@ -57,8 +60,8 @@ class ExampleRobolectricTest {
         }
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithText("GLOW FIRST").assertIsDisplayed()
-        composeTestRule.onNodeWithText("SMART GAMING MACRO").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("add_macro_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("add_game_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("open_game_button").assertIsDisplayed()
         composeTestRule.onNodeWithTag("manage_permissions_button").assertIsDisplayed()
     }
 }

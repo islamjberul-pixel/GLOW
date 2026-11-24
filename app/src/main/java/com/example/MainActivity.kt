@@ -2,11 +2,8 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,17 +21,15 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.MainViewModel
 import com.example.ui.components.AppInfoDialog
+import com.example.ui.screens.GamePickerScreen
 import com.example.ui.screens.HomeScreen
-import com.example.ui.screens.KeymapEditorScreen
 import com.example.ui.screens.PermissionSetupScreen
-import com.example.ui.screens.ScreenshotPreviewScreen
 import com.example.ui.theme.GlowFirstTheme
 
 private object Routes {
     const val HOME = "home"
+    const val GAME_PICKER = "game_picker"
     const val PERMISSIONS = "permissions"
-    const val PREVIEW = "preview"
-    const val EDITOR = "editor"
 }
 
 class MainActivity : ComponentActivity() {
@@ -59,18 +54,20 @@ private fun GlowFirstAppRoot(viewModel: MainViewModel) {
 
     val macroConfig by viewModel.macroConfig.collectAsStateWithLifecycle()
     val permissionStatus by viewModel.permissionStatus.collectAsStateWithLifecycle()
+    val shizukuStatus by viewModel.shizukuStatus.collectAsStateWithLifecycle()
     val engineState by viewModel.engineState.collectAsStateWithLifecycle()
-    val isImporting by viewModel.isImportingScreenshot.collectAsStateWithLifecycle()
+    val installedGames by viewModel.installedGames.collectAsStateWithLifecycle()
+    val isLoadingGames by viewModel.isLoadingGames.collectAsStateWithLifecycle()
     val feedbackBanner by viewModel.feedbackBanner.collectAsStateWithLifecycle()
 
     var showInfoDialog by remember { mutableStateOf(false) }
     var checkedFirstLaunch by remember { mutableStateOf(false) }
 
-    // Automatically re-check permissions whenever returning from Android Settings
+    // Automatically re-check system permissions & Shizuku authorization when returning to app
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshPermissions()
+                viewModel.refreshAllStatuses()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -79,35 +76,20 @@ private fun GlowFirstAppRoot(viewModel: MainViewModel) {
         }
     }
 
-    // First-launch permission setup gate
-    LaunchedEffect(macroConfig.hasCompletedPermissionSetup, permissionStatus.allCoreGranted) {
+    val coreReady = permissionStatus.overlayGranted &&
+        permissionStatus.notificationGranted &&
+        (permissionStatus.accessibilityGranted || shizukuStatus.isBackendReady)
+
+    // First-launch setup gate
+    LaunchedEffect(macroConfig.hasCompletedPermissionSetup, coreReady) {
         if (!checkedFirstLaunch) {
             checkedFirstLaunch = true
-            if (!macroConfig.hasCompletedPermissionSetup && !permissionStatus.allCoreGranted) {
+            if (!macroConfig.hasCompletedPermissionSetup && !coreReady) {
                 navController.navigate(Routes.PERMISSIONS) {
                     launchSingleTop = true
                 }
             }
         }
-    }
-
-    // Zero-permission Android Photo Picker
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importScreenshot(uri) {
-                navController.navigate(Routes.PREVIEW) {
-                    launchSingleTop = true
-                }
-            }
-        }
-    }
-
-    val launchPhotoPicker = {
-        photoPickerLauncher.launch(
-            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-        )
     }
 
     NavHost(
@@ -118,22 +100,19 @@ private fun GlowFirstAppRoot(viewModel: MainViewModel) {
             HomeScreen(
                 macroConfig = macroConfig,
                 permissionStatus = permissionStatus,
+                shizukuStatus = shizukuStatus,
                 engineState = engineState,
-                isImportingScreenshot = isImporting,
                 banner = feedbackBanner,
-                onAddMacroClick = launchPhotoPicker,
-                onEditKeymapClick = {
-                    if (macroConfig.isConfigured && macroConfig.screenshotPath.isNotBlank()) {
-                        navController.navigate(Routes.EDITOR) {
-                            launchSingleTop = true
-                        }
-                    } else {
-                        viewModel.showError("No saved macro found. Select a screenshot first.")
+                onAddGameClick = {
+                    viewModel.loadInstalledGames()
+                    navController.navigate(Routes.GAME_PICKER) {
+                        launchSingleTop = true
                     }
                 },
-                onToggleOverlay = { enabled ->
-                    viewModel.setOverlayEnabled(enabled)
-                },
+                onOpenGameClick = { viewModel.openSelectedGame() },
+                onOpenLiveKeymapClick = { viewModel.openLiveKeymapEditorFromApp() },
+                onSelectInputMode = { mode -> viewModel.setInputEngineMode(mode) },
+                onToggleOverlay = { enabled -> viewModel.setOverlayEnabled(enabled) },
                 onOpenPermissions = {
                     navController.navigate(Routes.PERMISSIONS) {
                         launchSingleTop = true
@@ -144,11 +123,28 @@ private fun GlowFirstAppRoot(viewModel: MainViewModel) {
             )
         }
 
+        composable(Routes.GAME_PICKER) {
+            GamePickerScreen(
+                installedGames = installedGames,
+                isLoading = isLoadingGames,
+                selectedPackageName = macroConfig.selectedGamePackage,
+                onRefreshGames = { viewModel.loadInstalledGames() },
+                onSelectGame = { game ->
+                    viewModel.selectGame(game)
+                    navController.popBackStack()
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
         composable(Routes.PERMISSIONS) {
             PermissionSetupScreen(
                 permissionStatus = permissionStatus,
+                shizukuStatus = shizukuStatus,
                 isFirstLaunchOnboarding = !macroConfig.hasCompletedPermissionSetup,
-                onRefreshPermissions = { viewModel.refreshPermissions() },
+                onRefreshPermissions = { viewModel.refreshAllStatuses() },
+                onRequestShizukuAuth = { viewModel.requestShizukuAuthorization() },
+                onOpenShizukuApp = { viewModel.openShizukuApp() },
                 onContinue = {
                     viewModel.markPermissionSetupCompleted()
                     if (!navController.popBackStack()) {
@@ -160,47 +156,11 @@ private fun GlowFirstAppRoot(viewModel: MainViewModel) {
                 onBack = { navController.popBackStack() }
             )
         }
-
-        composable(Routes.PREVIEW) {
-            ScreenshotPreviewScreen(
-                macroConfig = macroConfig,
-                banner = feedbackBanner,
-                onDismissBanner = { viewModel.dismissBanner() },
-                onEditKeymap = {
-                    navController.navigate(Routes.EDITOR) {
-                        launchSingleTop = true
-                    }
-                },
-                onChooseAnother = launchPhotoPicker,
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        composable(Routes.EDITOR) {
-            KeymapEditorScreen(
-                macroConfig = macroConfig,
-                onSave = { tX, tY, tSize, tapX, tapY, tapSize, cps ->
-                    viewModel.saveKeymapConfiguration(
-                        triggerNormX = tX,
-                        triggerNormY = tY,
-                        triggerSizeDp = tSize,
-                        tapNormX = tapX,
-                        tapNormY = tapY,
-                        tapSizeDp = tapSize,
-                        cps = cps,
-                        onSaved = {
-                            navController.popBackStack(Routes.HOME, inclusive = false)
-                        }
-                    )
-                },
-                onCancel = { navController.popBackStack() }
-            )
-        }
     }
 
     if (showInfoDialog) {
         AppInfoDialog(
-            isMacroConfigured = macroConfig.isConfigured,
+            hasSavedMacroOrGame = macroConfig.isConfigured || macroConfig.hasSelectedGame,
             onOpenPermissions = {
                 navController.navigate(Routes.PERMISSIONS) {
                     launchSingleTop = true

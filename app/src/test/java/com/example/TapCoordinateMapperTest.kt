@@ -9,53 +9,52 @@ import org.junit.Test
 class TapCoordinateMapperTest {
 
     @Test
-    fun `fitted image rect preserves landscape aspect ratio inside portrait container`() {
-        val rect = TapCoordinateMapper.computeFittedImageRect(
-            imageWidth = 1600,
-            imageHeight = 800,
-            containerWidth = 800f,
-            containerHeight = 1600f
+    fun `overlay top-left round-trips cleanly through normalized center across Nokia C30 display`() {
+        val displayW = 1600
+        val displayH = 720
+        val overlayPx = 136
+
+        val norm = TapCoordinateMapper.mapOverlayTopLeftToNormalizedCenter(
+            xPx = 200,
+            yPx = 300,
+            overlaySizePx = overlayPx,
+            displayWidth = displayW,
+            displayHeight = displayH
         )
-        assertEquals(0f, rect.left, 0.01f)
-        assertEquals(800f, rect.width, 0.01f)
-        assertEquals(400f, rect.height, 0.01f)
-        assertEquals(600f, rect.top, 0.01f)
+        // Center is (268, 368)
+        assertEquals(268f / 1600f, norm.x, 0.001f)
+        assertEquals(368f / 720f, norm.y, 0.001f)
+
+        val restored = TapCoordinateMapper.mapTriggerToOverlayParams(
+            triggerNormX = norm.x,
+            triggerNormY = norm.y,
+            overlaySizePx = overlayPx,
+            displayWidth = displayW,
+            displayHeight = displayH
+        )
+        assertEquals(200, restored.x)
+        assertEquals(300, restored.y)
     }
 
     @Test
-    fun `screenshot to screen round-trip preserves exact center coordinates`() {
-        val rect = TapCoordinateMapper.computeFittedImageRect(
-            imageWidth = 1600,
-            imageHeight = 720,
-            containerWidth = 720f,
-            containerHeight = 1600f
-        )
-        val norm = TapCoordinateMapper.screenPointToNormalizedScreenshot(
-            screenX = 540f,
-            screenY = rect.top + rect.height * 0.25f,
-            imageRect = rect
-        )
-        assertEquals(0.75f, norm.x, 0.001f)
-        assertEquals(0.25f, norm.y, 0.001f)
-
-        val restored = TapCoordinateMapper.normalizedScreenshotToScreenPoint(norm.x, norm.y, rect)
-        assertEquals(540f, restored.x, 0.5f)
-        assertEquals(rect.top + rect.height * 0.25f, restored.y, 0.5f)
-    }
-
-    @Test
-    fun `mapScreenshotToDisplay scales landscape screenshot to Nokia C30 landscape display`() {
-        // Different resolution (1280x720) mapped onto 1600x720 landscape display
-        val pt = TapCoordinateMapper.mapScreenshotToDisplay(
-            tapNormX = 0.5f,
-            tapNormY = 0.5f,
-            screenshotWidth = 1280,
-            screenshotHeight = 720,
+    fun `mapNormalizedPointToDisplay maps and clamps tap coordinates to display pixels`() {
+        val pt = TapCoordinateMapper.mapNormalizedPointToDisplay(
+            normX = 0.75f,
+            normY = 0.50f,
             displayWidth = 1600,
             displayHeight = 720
         )
-        assertEquals(800f, pt.x, 1.0f)
-        assertEquals(360f, pt.y, 1.0f)
+        assertEquals(1200f, pt.x, 0.5f)
+        assertEquals(360f, pt.y, 0.5f)
+
+        val clamped = TapCoordinateMapper.mapNormalizedPointToDisplay(
+            normX = 2.5f,
+            normY = -1.0f,
+            displayWidth = 1600,
+            displayHeight = 720
+        )
+        assertEquals(1599f, clamped.x, 0.5f)
+        assertEquals(1f, clamped.y, 0.5f)
     }
 
     @Test

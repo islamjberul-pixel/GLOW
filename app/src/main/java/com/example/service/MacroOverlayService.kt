@@ -1,6 +1,7 @@
 package com.example.service
 
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
@@ -14,12 +15,14 @@ import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.example.GlowFirstApplication
 import com.example.MainActivity
 import com.example.R
+import com.example.model.ActiveBackend
 import com.example.model.MacroConfig
 import com.example.util.TapCoordinateMapper
 import kotlinx.coroutines.CoroutineScope
@@ -35,54 +38,120 @@ class MacroOverlayService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var configJob: Job? = null
+    private var engineStateJob: Job? = null
 
     private var windowManager: WindowManager? = null
+    private var liveEditorController: LiveEditorOverlayController? = null
     private var triggerView: TriggerCircleView? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var latestConfig: MacroConfig = MacroConfig()
+    private var currentBackend: ActiveBackend = ActiveBackend.NONE
+    private var standbyMode: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        windowManager = wm
+        liveEditorController = LiveEditorOverlayController(this, wm)
+
         val app = applicationContext as GlowFirstApplication
         app.macroEngine.setOverlayServiceRunning(true)
 
-        startForegroundSafely(latestConfig.cps)
+        startForegroundSafely(latestConfig, currentBackend)
 
         configJob = serviceScope.launch {
             app.macroRepository.macroConfigFlow.collectLatest { config ->
                 latestConfig = config
                 app.macroEngine.updateConfig(config)
-                if (!config.isConfigured || !config.overlayActive || !Settings.canDrawOverlays(this@MacroOverlayService)) {
+
+                if (!Settings.canDrawOverlays(this@MacroOverlayService)) {
                     stopSelfAndDisableOverlay()
-                } else {
-                    ensureOrUpdateTriggerOverlay(config)
-                    updateNotification(config.cps)
+                    return@collectLatest
+                }
+
+                if (liveEditorController?.isEditorOpen != true) {
+                    if (config.isConfigured && config.overlayActive) {
+                        ensureOrUpdateTriggerOverlay(config)
+                    } else {
+                        removeTriggerView()
+                        if (!standbyMode) {
+                            stopSelfAndDisableOverlay()
+                            return@collectLatest
+                        }
+                    }
+                }
+                updateNotification(config, currentBackend)
+            }
+        }
+
+        engineStateJob = serviceScope.launch {
+            app.macroEngine.state.collectLatest { engineState ->
+                triggerView?.syncHoldVisual(engineState.isHoldingTrigger)
+                if (currentBackend != engineState.activeBackend) {
+                    currentBackend = engineState.activeBackend
+                    updateNotification(latestConfig, currentBackend)
                 }
             }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP_OVERLAY) {
-            stopSelfAndDisableOverlay()
-            return START_NOT_STICKY
-        }
+        when (intent?.action) {
+            ACTION_STOP_OVERLAY -> {
+                stopSelfAndDisableOverlay()
+                return START_NOT_STICKY
+            }
 
-        if (!Settings.canDrawOverlays(this)) {
-            stopSelfAndDisableOverlay()
-            return START_NOT_STICKY
-        }
+            ACTION_OPEN_LIVE_EDITOR -> {
+                standbyMode = true
+                if (!Settings.canDrawOverlays(this)) {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.error_overlay_permission_missing),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return START_NOT_STICKY
+                }
+                collapseShadePreS()
+                startForegroundSafely(latestConfig, currentBackend)
+                openLiveKeymapEditor()
+                return START_STICKY
+            }
 
-        startForegroundSafely(latestConfig.cps)
-        return START_STICKY
+            ACTION_START_STANDBY -> {
+                standbyMode = true
+                if (!Settings.canDrawOverlays(this)) {
+                    stopSelfAndDisableOverlay()
+                    return START_NOT_STICKY
+                }
+                startForegroundSafely(latestConfig, currentBackend)
+                if (latestConfig.isConfigured && latestConfig.overlayActive && liveEditorController?.isEditorOpen != true) {
+                    ensureOrUpdateTriggerOverlay(latestConfig)
+                }
+                return START_STICKY
+            }
+
+            else -> {
+                if (!Settings.canDrawOverlays(this)) {
+                    stopSelfAndDisableOverlay()
+                    return START_NOT_STICKY
+                }
+                startForegroundSafely(latestConfig, currentBackend)
+                if (latestConfig.isConfigured && latestConfig.overlayActive && liveEditorController?.isEditorOpen != true) {
+                    ensureOrUpdateTriggerOverlay(latestConfig)
+                }
+                return START_STICKY
+            }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (latestConfig.isConfigured && latestConfig.overlayActive) {
+        if (liveEditorController?.isEditorOpen == true) {
+            liveEditorController?.onDisplayChanged()
+        } else if (latestConfig.isConfigured && latestConfig.overlayActive) {
             ensureOrUpdateTriggerOverlay(latestConfig)
         }
     }
@@ -90,16 +159,61 @@ class MacroOverlayService : Service() {
     override fun onDestroy() {
         val app = applicationContext as GlowFirstApplication
         app.macroEngine.stopHoldTap()
+        app.macroEngine.setLiveEditorOpen(false)
         app.macroEngine.setOverlayServiceRunning(false)
+        liveEditorController?.dismiss()
         removeTriggerView()
         configJob?.cancel()
+        engineStateJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    private fun openLiveKeymapEditor() {
+        val controller = liveEditorController ?: return
+        val app = applicationContext as GlowFirstApplication
+        app.macroEngine.stopHoldTap()
+        app.macroEngine.setLiveEditorOpen(true)
+        removeTriggerView()
+
+        controller.show(
+            config = latestConfig,
+            onSave = { tX, tY, tSize, tapX, tapY, tapSize, cps ->
+                app.macroEngine.setLiveEditorOpen(false)
+                serviceScope.launch {
+                    app.macroRepository.saveLiveKeymapConfiguration(
+                        triggerNormX = tX,
+                        triggerNormY = tY,
+                        triggerSizeDp = tSize,
+                        tapNormX = tapX,
+                        tapNormY = tapY,
+                        tapSizeDp = tapSize,
+                        cps = cps,
+                        overlayActive = true
+                    )
+                    Toast.makeText(
+                        this@MacroOverlayService,
+                        "Keymap saved ($cps CPS). Hold Trigger to tap.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            },
+            onCancel = {
+                app.macroEngine.setLiveEditorOpen(false)
+                if (latestConfig.isConfigured && latestConfig.overlayActive) {
+                    ensureOrUpdateTriggerOverlay(latestConfig)
+                }
+            }
+        )
     }
 
     private fun stopSelfAndDisableOverlay() {
         val app = applicationContext as GlowFirstApplication
         app.macroEngine.stopHoldTap()
+        app.macroEngine.setLiveEditorOpen(false)
+        liveEditorController?.dismiss()
+        removeTriggerView()
+        standbyMode = false
         serviceScope.launch {
             app.macroRepository.setOverlayActive(false)
             stopSelf()
@@ -184,6 +298,13 @@ class MacroOverlayService : Service() {
         overlayParams = null
     }
 
+    private fun collapseShadePreS() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            @Suppress("DEPRECATION")
+            runCatching { sendBroadcast(Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)) }
+        }
+    }
+
     private fun readRealDisplaySize(wm: WindowManager): Pair<Int, Int> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val bounds = wm.currentWindowMetrics.bounds
@@ -196,8 +317,8 @@ class MacroOverlayService : Service() {
         }
     }
 
-    private fun startForegroundSafely(cps: Int) {
-        val notification = buildNotification(cps)
+    private fun startForegroundSafely(config: MacroConfig, backend: ActiveBackend) {
+        val notification = buildNotification(config, backend)
         val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else {
@@ -206,12 +327,12 @@ class MacroOverlayService : Service() {
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fgsType)
     }
 
-    private fun updateNotification(cps: Int) {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification(cps))
+    private fun updateNotification(config: MacroConfig, backend: ActiveBackend) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIFICATION_ID, buildNotification(config, backend))
     }
 
-    private fun buildNotification(cps: Int): Notification {
+    private fun buildNotification(config: MacroConfig, backend: ActiveBackend): Notification {
         val openAppIntent = PendingIntent.getActivity(
             this,
             0,
@@ -219,31 +340,72 @@ class MacroOverlayService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val stopIntent = PendingIntent.getService(
+        val keymapIntent = PendingIntent.getService(
             this,
             1,
+            Intent(this, MacroOverlayService::class.java).setAction(ACTION_OPEN_LIVE_EDITOR),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val stopIntent = PendingIntent.getService(
+            this,
+            2,
             Intent(this, MacroOverlayService::class.java).setAction(ACTION_STOP_OVERLAY),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val gameTitle = config.selectedGameName.ifBlank { getString(R.string.app_name) }
+        val title = if (config.isConfigured && config.overlayActive) {
+            getString(R.string.notification_overlay_title, gameTitle)
+        } else {
+            getString(R.string.notification_ready_title, gameTitle)
+        }
+
+        val text = if (config.isConfigured && config.overlayActive) {
+            getString(R.string.notification_overlay_text, config.cps, backend.displayName)
+        } else {
+            getString(R.string.notification_ready_text)
+        }
+
+        val keymapActionLabel = if (config.isConfigured) {
+            getString(R.string.action_edit_keymap)
+        } else {
+            getString(R.string.action_keymap)
+        }
+
         return NotificationCompat.Builder(this, GlowFirstApplication.CHANNEL_OVERLAY)
             .setSmallIcon(R.drawable.ic_stat_glow)
-            .setContentTitle(getString(R.string.notification_overlay_title))
-            .setContentText(getString(R.string.notification_overlay_text, cps))
+            .setContentTitle(title)
+            .setContentText(text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(openAppIntent)
+            .addAction(0, keymapActionLabel, keymapIntent)
             .addAction(0, getString(R.string.action_stop_overlay), stopIntent)
             .build()
     }
 
     companion object {
         const val NOTIFICATION_ID = 1001
+        const val ACTION_START_STANDBY = "com.example.action.START_STANDBY"
+        const val ACTION_OPEN_LIVE_EDITOR = "com.example.action.OPEN_LIVE_EDITOR"
         const val ACTION_STOP_OVERLAY = "com.example.action.STOP_OVERLAY"
 
         fun start(context: Context) {
             val intent = Intent(context, MacroOverlayService::class.java)
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun startStandby(context: Context) {
+            val intent = Intent(context, MacroOverlayService::class.java)
+                .setAction(ACTION_START_STANDBY)
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun openLiveEditor(context: Context) {
+            val intent = Intent(context, MacroOverlayService::class.java)
+                .setAction(ACTION_OPEN_LIVE_EDITOR)
             ContextCompat.startForegroundService(context, intent)
         }
 

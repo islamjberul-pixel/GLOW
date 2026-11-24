@@ -1,18 +1,20 @@
 package com.example.ui
 
 import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.GlowFirstApplication
 import com.example.R
+import com.example.model.ActiveBackend
+import com.example.model.InputEngineMode
+import com.example.model.InstalledGameApp
 import com.example.model.MacroConfig
-import com.example.model.MacroConstants
 import com.example.model.MacroEngineState
 import com.example.model.PermissionStatus
+import com.example.model.ShizukuStatus
 import com.example.service.MacroOverlayService
+import com.example.util.GameDiscoveryHelper
 import com.example.util.PermissionHelper
-import com.example.util.ScreenshotStorage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +32,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as GlowFirstApplication
     private val repository = app.macroRepository
     private val engine = app.macroEngine
+    private val shizukuManager = app.shizukuBackendManager
 
     val macroConfig: StateFlow<MacroConfig> = repository.macroConfigFlow
         .stateIn(
@@ -39,20 +42,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     val engineState: StateFlow<MacroEngineState> = engine.state
+    val shizukuStatus: StateFlow<ShizukuStatus> = shizukuManager.status
 
     private val _permissionStatus = MutableStateFlow(PermissionHelper.getPermissionStatus(app))
     val permissionStatus: StateFlow<PermissionStatus> = _permissionStatus.asStateFlow()
 
-    private val _isImportingScreenshot = MutableStateFlow(false)
-    val isImportingScreenshot: StateFlow<Boolean> = _isImportingScreenshot.asStateFlow()
+    private val _installedGames = MutableStateFlow<List<InstalledGameApp>>(emptyList())
+    val installedGames: StateFlow<List<InstalledGameApp>> = _installedGames.asStateFlow()
+
+    private val _isLoadingGames = MutableStateFlow(false)
+    val isLoadingGames: StateFlow<Boolean> = _isLoadingGames.asStateFlow()
 
     private val _feedbackBanner = MutableStateFlow<UiFeedbackBanner?>(null)
     val feedbackBanner: StateFlow<UiFeedbackBanner?> = _feedbackBanner.asStateFlow()
 
-    fun refreshPermissions() {
+    fun refreshAllStatuses() {
         val status = PermissionHelper.getPermissionStatus(app)
         _permissionStatus.value = status
         engine.setAccessibilityConnected(status.accessibilityGranted)
+        shizukuManager.refreshStatus()
+
         if (!status.overlayGranted && macroConfig.value.overlayActive) {
             viewModelScope.launch {
                 repository.setOverlayActive(false)
@@ -76,115 +85,106 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _feedbackBanner.value = UiFeedbackBanner(message = message, isError = true)
     }
 
-    fun importScreenshot(uri: Uri, onSuccess: () -> Unit) {
-        if (_isImportingScreenshot.value) return
+    fun loadInstalledGames() {
+        if (_isLoadingGames.value) return
         viewModelScope.launch {
-            _isImportingScreenshot.value = true
-            _feedbackBanner.value = null
-            val result = ScreenshotStorage.importScreenshot(app, uri)
-            _isImportingScreenshot.value = false
-            result.onSuccess { saved ->
-                repository.saveScreenshotReference(
-                    path = saved.filePath,
-                    width = saved.width,
-                    height = saved.height
-                )
-                onSuccess()
-            }.onFailure { throwable ->
-                val messageRes = when ((throwable as? com.example.util.ScreenshotImportException)?.kind) {
-                    com.example.util.ScreenshotErrorKind.UNSUPPORTED_FORMAT ->
-                        R.string.error_screenshot_unsupported
-                    com.example.util.ScreenshotErrorKind.ACCESS_DENIED ->
-                        R.string.error_screenshot_access_denied
-                    com.example.util.ScreenshotErrorKind.FILE_UNAVAILABLE ->
-                        R.string.error_screenshot_unavailable
-                    com.example.util.ScreenshotErrorKind.DECODE_FAILED ->
-                        R.string.error_screenshot_decode_failed
-                    com.example.util.ScreenshotErrorKind.INSUFFICIENT_MEMORY ->
-                        R.string.error_screenshot_oom
-                    null -> R.string.error_screenshot_failed
-                }
-                _feedbackBanner.value = UiFeedbackBanner(
-                    message = app.getString(messageRes),
-                    isError = true
-                )
+            _isLoadingGames.value = true
+            _installedGames.value = GameDiscoveryHelper.getLaunchableApps(app)
+            _isLoadingGames.value = false
+        }
+    }
+
+    fun selectGame(game: InstalledGameApp) {
+        viewModelScope.launch {
+            repository.saveSelectedGame(game.packageName, game.appName)
+            _feedbackBanner.value = UiFeedbackBanner(
+                message = "Selected ${game.appName}. Tap OPEN GAME to launch with GLOW FIRST.",
+                isError = false
+            )
+        }
+    }
+
+    fun setInputEngineMode(mode: InputEngineMode) {
+        viewModelScope.launch {
+            repository.saveInputEngineMode(mode)
+            val resolved = app.inputEngineManager.updateMode(mode)
+            if (mode == InputEngineMode.SHIZUKU && resolved != ActiveBackend.SHIZUKU) {
+                shizukuManager.refreshStatus()
+                shizukuManager.bindUserServiceIfAuthorized()
             }
         }
     }
 
-    fun saveKeymapConfiguration(
-        triggerNormX: Float,
-        triggerNormY: Float,
-        triggerSizeDp: Float,
-        tapNormX: Float,
-        tapNormY: Float,
-        tapSizeDp: Float,
-        cps: Int,
-        onSaved: () -> Unit
-    ) {
-        val current = macroConfig.value
-        if (!ScreenshotStorage.isScreenshotValid(current.screenshotPath)) {
-            _feedbackBanner.value = UiFeedbackBanner(
-                message = app.getString(R.string.error_screenshot_failed),
-                isError = true
-            )
+    fun requestShizukuAuthorization() {
+        val status = shizukuManager.refreshStatus()
+        if (!status.isInstalled) {
+            showError("Shizuku app is not installed on this device.")
             return
         }
-        if (cps !in MacroConstants.MIN_CPS..MacroConstants.MAX_CPS) {
-            _feedbackBanner.value = UiFeedbackBanner(
-                message = app.getString(R.string.error_invalid_cps),
-                isError = true
-            )
+        if (!status.isServiceRunning) {
+            showError("Shizuku service is not running yet. Start it in the Shizuku app first.")
+            return
+        }
+        val triggered = shizukuManager.requestAuthorization()
+        if (!triggered) {
+            showError("Could not prompt for Shizuku authorization.")
+        }
+    }
+
+    fun openShizukuApp() {
+        val launched = shizukuManager.openShizukuApp()
+        if (!launched) {
+            showError("Shizuku app is not installed on this device.")
+        }
+    }
+
+    fun openSelectedGame() {
+        val config = macroConfig.value
+        if (!config.hasSelectedGame) {
+            showError("Select a game first using ADD GAME.")
             return
         }
 
         val permissions = PermissionHelper.getPermissionStatus(app)
         _permissionStatus.value = permissions
-        val canShowOverlay = permissions.overlayGranted
-
-        viewModelScope.launch {
-            val updated = current.copy(
-                isConfigured = true,
-                triggerNormX = triggerNormX.coerceIn(0f, 1f),
-                triggerNormY = triggerNormY.coerceIn(0f, 1f),
-                triggerSizeDp = triggerSizeDp.coerceIn(
-                    MacroConstants.MIN_TRIGGER_SIZE_DP,
-                    MacroConstants.MAX_TRIGGER_SIZE_DP
-                ),
-                tapNormX = tapNormX.coerceIn(0f, 1f),
-                tapNormY = tapNormY.coerceIn(0f, 1f),
-                tapSizeDp = tapSizeDp.coerceIn(
-                    MacroConstants.MIN_TAP_SIZE_DP,
-                    MacroConstants.MAX_TAP_SIZE_DP
-                ),
-                cps = cps,
-                overlayActive = canShowOverlay
-            )
-            repository.saveMacroConfiguration(updated)
-            engine.updateConfig(updated)
-
-            if (canShowOverlay) {
-                MacroOverlayService.start(app)
-                if (!permissions.accessibilityGranted) {
-                    _feedbackBanner.value = UiFeedbackBanner(
-                        message = "Keymap saved & Trigger overlay shown. Enable Accessibility Service to tap.",
-                        isError = true
-                    )
-                } else {
-                    _feedbackBanner.value = UiFeedbackBanner(
-                        message = "Keymap saved. Floating Trigger is active at $cps CPS.",
-                        isError = false
-                    )
-                }
-            } else {
-                MacroOverlayService.stop(app)
-                _feedbackBanner.value = UiFeedbackBanner(
-                    message = app.getString(R.string.error_overlay_permission_missing),
-                    isError = true
-                )
-            }
-            onSaved()
+        if (!permissions.overlayGranted) {
+            showError(app.getString(R.string.error_overlay_permission_missing))
+            return
         }
+
+        val launched = GameDiscoveryHelper.launchGame(app, config.selectedGamePackage)
+        if (!launched) {
+            showError(app.getString(R.string.error_game_launch_failed))
+            return
+        }
+
+        MacroOverlayService.startStandby(app)
+
+        if (engine.state.value.activeBackend == ActiveBackend.NONE) {
+            _feedbackBanner.value = UiFeedbackBanner(
+                message = "Game launched with KEYMAP notification. Enable Accessibility or Shizuku before tapping.",
+                isError = true
+            )
+        } else {
+            _feedbackBanner.value = UiFeedbackBanner(
+                message = "Opened ${config.selectedGameName}. Use KEYMAP in the notification bar over your game.",
+                isError = false
+            )
+        }
+    }
+
+    fun openLiveKeymapEditorFromApp() {
+        val permissions = PermissionHelper.getPermissionStatus(app)
+        _permissionStatus.value = permissions
+        if (!permissions.overlayGranted) {
+            showError(app.getString(R.string.error_overlay_permission_missing))
+            return
+        }
+        val config = macroConfig.value
+        if (config.hasSelectedGame) {
+            GameDiscoveryHelper.launchGame(app, config.selectedGamePackage)
+        }
+        MacroOverlayService.openLiveEditor(app)
     }
 
     fun setOverlayEnabled(enabled: Boolean) {
@@ -199,12 +199,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (!permissions.overlayGranted) {
                 showError(app.getString(R.string.error_overlay_permission_missing))
                 return
-            }
-            if (!permissions.accessibilityGranted) {
-                showError(app.getString(R.string.error_accessibility_disabled))
-                // Still allow showing overlay or block? Allowing overlay while warning clearly,
-                // or blocking until accessibility is enabled — warning clearly is transparent
-                // and lets user test overlay placement immediately.
             }
             viewModelScope.launch {
                 repository.setOverlayActive(true)
@@ -225,7 +219,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             MacroOverlayService.stop(app)
             repository.clearMacro()
             _feedbackBanner.value = UiFeedbackBanner(
-                message = "Saved macro cleared.",
+                message = "Saved game and keymap cleared.",
                 isError = false
             )
         }

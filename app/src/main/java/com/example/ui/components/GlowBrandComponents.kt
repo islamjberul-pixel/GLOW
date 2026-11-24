@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -10,7 +11,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -33,12 +34,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -52,8 +55,12 @@ import com.example.ui.theme.StatusError
 import com.example.ui.theme.StatusErrorContainer
 import com.example.ui.theme.StatusWarning
 import com.example.ui.theme.StatusWarningContainer
+import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.util.GameDiscoveryHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun GlowFirstLogoMark(
@@ -94,6 +101,47 @@ fun GlowFirstLogoMark(
             drawLine(GlowGreen, Offset(c.x, this.size.height - tickLen), Offset(c.x, this.size.height), strokeWidth = 3f)
             drawLine(GlowGreen, Offset(0f, c.y), Offset(tickLen, c.y), strokeWidth = 3f)
             drawLine(GlowGreen, Offset(this.size.width - tickLen, c.y), Offset(this.size.width, c.y), strokeWidth = 3f)
+        }
+    }
+}
+
+@Composable
+fun GameAppIcon(
+    packageName: String,
+    contentDescription: String?,
+    size: Dp = 42.dp,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val bitmapState = produceState<ImageBitmap?>(initialValue = null, key1 = packageName) {
+        value = withContext(Dispatchers.IO) {
+            GameDiscoveryHelper.loadCompactAppIcon(context, packageName, sizePx = 96)
+        }
+    }
+    val bmp = bitmapState.value
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(RoundedCornerShape(12.dp))
+            .background(GlowSurfaceCard)
+            .border(1.dp, GlowBorderSubtle, RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bmp != null) {
+            Image(
+                bitmap = bmp,
+                contentDescription = contentDescription,
+                modifier = Modifier
+                    .size(size - 6.dp)
+                    .clip(RoundedCornerShape(9.dp))
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.SportsEsports,
+                contentDescription = contentDescription,
+                tint = TextMuted,
+                modifier = Modifier.size(size * 0.55f)
+            )
         }
     }
 }
@@ -191,7 +239,7 @@ fun FeedbackBannerCard(
 
 @Composable
 fun AppInfoDialog(
-    isMacroConfigured: Boolean,
+    hasSavedMacroOrGame: Boolean,
     onOpenPermissions: () -> Unit,
     onClearMacro: () -> Unit,
     onDismiss: () -> Unit
@@ -208,7 +256,7 @@ fun AppInfoDialog(
                 Column {
                     Text("GLOW FIRST", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "v1.0 · Single-Profile Macro Engine",
+                        "v2.0.0 · Dual-Backend Live Macro",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )
@@ -227,12 +275,12 @@ fun AppInfoDialog(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            "How Hold-to-Tap Works",
+                            "Live Keymap & Dual Backends",
                             style = MaterialTheme.typography.titleSmall,
                             color = GlowGreen
                         )
                         Text(
-                            "Press and hold the small floating Trigger circle while in your game. GLOW FIRST dispatches taps at your saved screenshot coordinates and stops immediately when you release your finger.",
+                            "Launch your selected game, open KEYMAP from the notification bar, drag/resize TRIGGER & TAP directly over the game, and press SAVE. GLOW FIRST uses either Shizuku or AccessibilityService (never both at once).",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary
                         )
@@ -248,12 +296,12 @@ fun AppInfoDialog(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            "Android Multi-Touch Note",
+                            "Android 11 Multi-Touch Behavior",
                             style = MaterialTheme.typography.titleSmall,
                             color = StatusWarning
                         )
                         Text(
-                            "Touches outside the small Trigger circle pass directly to your game. However, Android AccessibilityService dispatchGesture can occasionally be interrupted by simultaneous physical multi-touch on some Android 11 devices.",
+                            "Touches outside the small floating Trigger circle pass straight through to your game. However, Android 11 can still interrupt or cancel synthetic touch events while another physical finger drags on the same screen.",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary
                         )
@@ -269,9 +317,9 @@ fun AppInfoDialog(
                 ) {
                     Icon(Icons.Rounded.Security, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Permission Setup Guide")
+                    Text("Permissions & Shizuku Setup")
                 }
-                if (isMacroConfigured) {
+                if (hasSavedMacroOrGame) {
                     Button(
                         onClick = {
                             onClearMacro()
@@ -285,7 +333,7 @@ fun AppInfoDialog(
                     ) {
                         Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Clear Saved Macro")
+                        Text("Clear Saved Game & Keymap")
                     }
                 }
             }

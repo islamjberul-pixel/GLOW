@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 import com.example.GlowFirstApplication
+import com.example.model.ActiveBackend
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,7 +41,9 @@ class MacroAccessibilityService : AccessibilityService() {
             instance = null
         }
         _isConnectedFlow.value = false
-        (applicationContext as? GlowFirstApplication)?.macroEngine?.setAccessibilityConnected(false)
+        (applicationContext as? GlowFirstApplication)?.macroEngine?.onBackendDisconnected(
+            ActiveBackend.ACCESSIBILITY
+        )
     }
 
     companion object {

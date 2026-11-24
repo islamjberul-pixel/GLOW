@@ -6,7 +6,10 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import com.example.data.MacroRepository
+import com.example.engine.InputEngineManager
 import com.example.engine.MacroEngine
+import com.example.model.ActiveBackend
+import com.example.shizuku.ShizukuBackendManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,11 +21,30 @@ class GlowFirstApplication : Application() {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     val macroRepository: MacroRepository by lazy { MacroRepository(this) }
-    val macroEngine: MacroEngine by lazy { MacroEngine(this) }
+    val shizukuBackendManager: ShizukuBackendManager by lazy { ShizukuBackendManager(this) }
+    val inputEngineManager: InputEngineManager by lazy { InputEngineManager() }
+    val macroEngine: MacroEngine by lazy {
+        MacroEngine(
+            appContext = this,
+            inputEngineManager = inputEngineManager,
+            shizukuBackendManager = shizukuBackendManager
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+
+        shizukuBackendManager.initialize {
+            macroEngine.onBackendDisconnected(ActiveBackend.SHIZUKU)
+        }
+
+        appScope.launch {
+            shizukuBackendManager.status.collectLatest { shizukuStatus ->
+                macroEngine.setShizukuStatus(shizukuStatus)
+            }
+        }
+
         appScope.launch {
             macroRepository.macroConfigFlow.collectLatest { config ->
                 macroEngine.updateConfig(config)

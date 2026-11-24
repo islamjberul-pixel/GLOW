@@ -5,21 +5,23 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.hypot
 import kotlin.math.min
 
 /**
- * Lightweight custom View for the floating circular Trigger overlay.
+ * Lightweight custom View for the locked floating circular Trigger overlay.
  *
  * Uses direct Canvas drawing (no Compose overhead inside WindowManager) for optimal RAM/CPU
  * efficiency on entry-level Android 11 hardware such as Nokia C30.
  *
- * Touch behavior:
+ * Behavior:
+ * - Light white semi-transparent appearance while idle.
+ * - Immediately glows neon green (#00E676) on ACTION_DOWN while held.
+ * - Immediately returns to white on ACTION_UP, ACTION_CANCEL, detachment, or forced stop.
  * - Bounded strictly to this circular window; outside areas pass touches directly to the game.
- * - ACTION_DOWN inside the circle starts hold-to-tap immediately.
- * - ACTION_UP / ACTION_CANCEL / detachment stops hold-to-tap immediately.
  */
 @SuppressLint("ViewConstructor")
 class TriggerCircleView(
@@ -32,29 +34,43 @@ class TriggerCircleView(
 
     private val idleFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.argb(42, 255, 255, 255) // Subtle translucent white
+        color = Color.argb(46, 255, 255, 255)
     }
 
     private val activeFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.argb(64, 0, 230, 118) // Subtle emerald glow while held
+        color = Color.argb(82, 0, 230, 118)
     }
 
     private val idleBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dpToPx(1.75f)
-        color = Color.argb(185, 255, 255, 255)
+        strokeWidth = dpToPx(2f)
+        color = Color.argb(205, 255, 255, 255)
     }
 
     private val activeBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dpToPx(2.5f)
+        strokeWidth = dpToPx(2.8f)
         color = Color.rgb(0, 230, 118)
+    }
+
+    private val idleTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.argb(215, 255, 255, 255)
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+
+    private val activeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.rgb(105, 240, 174)
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
 
     private val centerDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.argb(145, 255, 255, 255)
+        color = Color.argb(175, 255, 255, 255)
     }
 
     private val activeDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -68,6 +84,12 @@ class TriggerCircleView(
         contentDescription = "GLOW FIRST Floating Trigger"
     }
 
+    fun syncHoldVisual(active: Boolean) {
+        if (!active && isTriggerHeld) {
+            setHeldState(false)
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val cx = width / 2f
@@ -75,13 +97,18 @@ class TriggerCircleView(
         val borderPaint = if (isTriggerHeld) activeBorderPaint else idleBorderPaint
         val fillPaint = if (isTriggerHeld) activeFillPaint else idleFillPaint
         val dotPaint = if (isTriggerHeld) activeDotPaint else centerDotPaint
+        val textPaint = if (isTriggerHeld) activeTextPaint else idleTextPaint
         val radius = (min(width, height) / 2f) - borderPaint.strokeWidth
 
         if (radius <= 0f) return
 
         canvas.drawCircle(cx, cy, radius, fillPaint)
         canvas.drawCircle(cx, cy, radius, borderPaint)
-        canvas.drawCircle(cx, cy, dpToPx(3.5f), dotPaint)
+
+        textPaint.textSize = (radius * 0.30f).coerceIn(spToPx(8f), spToPx(12f))
+        val textOffset = (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawCircle(cx, cy - radius * 0.25f, dpToPx(2.8f), dotPaint)
+        canvas.drawText("TRIGGER", cx, cy + radius * 0.25f - textOffset, textPaint)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -139,7 +166,8 @@ class TriggerCircleView(
         }
     }
 
-    private fun dpToPx(dp: Float): Float {
-        return dp * resources.displayMetrics.density
-    }
+    private fun dpToPx(dp: Float): Float = dp * resources.displayMetrics.density
+
+    @Suppress("DEPRECATION")
+    private fun spToPx(sp: Float): Float = sp * resources.displayMetrics.scaledDensity
 }
