@@ -36,9 +36,8 @@ jobs:
         run: |
           set +o pipefail
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-          sdkmanager "platforms;android-36.1" || true
-          ls -la "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platforms" || true
+          sdkmanager "platform-tools" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" "build-tools;36.1.0"
+          ls -la "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platforms" "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -64,7 +63,7 @@ jobs:
           fi
 
       - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: ./gradlew :app:assembleDebug --no-daemon --no-configuration-cache --stacktrace
 
       - name: Verify generated APK
         run: |

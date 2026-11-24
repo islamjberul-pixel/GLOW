@@ -62,7 +62,6 @@ android {
   buildFeatures {
     compose = true
     buildConfig = true
-    aidl = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
